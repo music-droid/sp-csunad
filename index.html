@@ -41,6 +41,15 @@ textarea:focus{outline:none;border-color:var(--acc)}
 .recent li button:active{background:var(--acc);color:var(--accfg)}
 footer{margin-top:22px;font-size:13px;color:var(--soft);line-height:1.4}
 #vhint{margin-top:4px}
+#vname{all:unset;cursor:pointer;color:var(--soft);font-size:13px;text-decoration:underline dotted;-webkit-tap-highlight-color:transparent}
+#vlist{margin-top:8px;max-height:50vh;overflow:auto;border:1px solid rgba(127,127,127,.3);border-radius:10px;padding:8px}
+#vlist ul{list-style:none;margin:6px 0 0;padding:0}
+#vlist li button{all:unset;display:block;box-sizing:border-box;width:100%;padding:6px 4px;border-bottom:1px solid rgba(127,127,127,.15);cursor:pointer}
+#vlist li button.on b{color:var(--acc)}
+#vlist b{display:block;font-size:13px;font-weight:600}
+#vlist small{display:block;font-size:11px;word-break:break-all}
+#vlist .vauto{all:unset;cursor:pointer;font-size:13px;text-decoration:underline}
+#vlist .vauto:disabled{text-decoration:none;opacity:.7;cursor:default}
 .warn{background:#fde68a;color:#3b2f00;padding:12px 14px;border-radius:12px;margin-bottom:12px;font-size:17px}
 .hint{font-size:14px;color:var(--soft);margin:6px 2px 0}
 </style>
@@ -64,7 +73,7 @@ footer{margin-top:22px;font-size:13px;color:var(--soft);line-height:1.4}
 
 <div id="recentWrap" hidden><div class="lbl">Recent</div><ul class="recent" id="recent"></ul></div>
 
-<footer id="foot"><div id="vname">Voice: loading…</div><div id="vhint" hidden>For a better voice: iPhone Settings, Accessibility, Spoken Content (or Read &amp; Speak), Voices, English, download Evan or Nathan (Enhanced or Premium).</div></footer>
+<footer id="foot"><button type="button" id="vname" aria-expanded="false">Voice: loading…</button><div id="vlist" hidden></div><div id="vhint" hidden>For a better voice: iPhone Settings, Accessibility, Spoken Content (or Read &amp; Speak), Voices, English, download Evan or Nathan (Enhanced or Premium).</div></footer>
 
 <script>
 (function(){
@@ -76,35 +85,68 @@ if(!ok)$("unsupported").hidden=false;
 var custom=LS.get("custom",[]), recent=LS.get("recent",[]);
 var voice=null, current=null, RATE=1.0, VOLUME=1;
 
-var MALE=["Evan","Nathan","Tom","Aaron","Reed","Alex","Arthur","Daniel","Fred"];
+var MALE=["evan","nathan","tom","aaron","reed","alex","arthur","daniel","fred"];
 var FALLBACK=[/Google US English Male/i,/Microsoft Guy/i,/Microsoft Andrew/i,/Microsoft Christopher/i,/Microsoft Eric/i];
-function tier(v){var t=(v.name+" "+v.voiceURI).toLowerCase();return t.indexOf("premium")>=0?0:t.indexOf("enhanced")>=0?1:2}
-function maleIdx(v){for(var i=0;i<MALE.length;i++){if(new RegExp("(^|[\\s.])"+MALE[i]+"(\\b|$)").test(v.name)||new RegExp("\\."+MALE[i]+"$").test(v.voiceURI))return i}return -1}
-function isUS(v){return /^en[-_]US/i.test(v.lang)}
+var allVoices=[], manual=LS.get("voice",null);
+function uri(v){return String(v.voiceURI||"")}
+function tier(v){var u=uri(v).toLowerCase(),n=String(v.name||"").toLowerCase();
+  if(u.indexOf("premium")>=0)return 0;if(u.indexOf("enhanced")>=0)return 1;
+  if(n.indexOf("premium")>=0)return 0;if(n.indexOf("enhanced")>=0)return 1;return 2}
+function baseName(v){return String(v.name||"").replace(/^com\.apple\.\S+\./i,"").replace(/\s*\((premium|enhanced|compact)\)\s*/ig," ").trim()}
+function maleIdx(v){var n=baseName(v).toLowerCase(),u=uri(v).toLowerCase();
+  for(var i=0;i<MALE.length;i++){var m=MALE[i];
+    if(new RegExp("(^|[^a-z])"+m+"([^a-z]|$)").test(n)||new RegExp("[.:_-]"+m+"([^a-z]|$)").test(u))return i}
+  return -1}
+function isUS(v){return /^en[-_]US/i.test(v.lang||"")}
+function isEn(v){return /^en/i.test(v.lang||"")}
 function pick(vs){
-  var male=vs.filter(function(v){return /^en/i.test(v.lang)&&maleIdx(v)>=0});
+  var male=vs.filter(function(v){return isEn(v)&&maleIdx(v)>=0});
   var us=male.filter(isUS);
   var pool=us.length?us:male;
   if(pool.length){pool.sort(function(a,b){return tier(a)-tier(b)||maleIdx(a)-maleIdx(b)});return pool[0]}
   for(var i=0;i<FALLBACK.length;i++){var f=vs.filter(function(v){return FALLBACK[i].test(v.name)}).sort(function(a,b){return (/natural|online/i.test(b.name)?1:0)-(/natural|online/i.test(a.name)?1:0)});if(f.length)return f[0]}
-  return vs.filter(function(v){return v.default&&/^en/i.test(v.lang)})[0]||vs.filter(isUS)[0]||vs.filter(function(v){return v.default})[0]||vs[0]||null;
+  return vs.filter(function(v){return v.default&&isEn(v)})[0]||vs.filter(isUS)[0]||vs.filter(function(v){return v.default})[0]||vs[0]||null;
 }
+function findManual(vs){if(!manual)return null;
+  return vs.filter(function(v){return uri(v)&&uri(v)===manual.uri})[0]||vs.filter(function(v){return v.name===manual.name&&(v.lang||"")===(manual.lang||"")})[0]||null}
+function label(v){var nm=baseName(v)||v.name;var t=tier(v);return nm+(t===0?" (Premium)":t===1?" (Enhanced)":"")}
 function loadVoices(){
   if(!ok)return;
-  var vs=synth.getVoices()||[];if(!vs.length)return;
-  voice=pick(vs);
-  var nm=voice?voice.name.replace(/^com\.apple\.\S+\./,""):"default";
-  if(voice&&tier(voice)<2&&!/\((Premium|Enhanced)\)/i.test(nm))nm+=tier(voice)===0?" (Premium)":" (Enhanced)";
-  $("vname").textContent="Voice: "+nm;
+  var vs=[];try{vs=synth.getVoices()||[]}catch(e){}
+  if(!vs.length)return;
+  allVoices=vs;
+  var m=findManual(vs);
+  voice=m||pick(vs);
+  $("vname").textContent="Voice: "+(voice?label(voice):"default")+(m?" (your choice)":"");
   var good=voice&&(tier(voice)<2&&maleIdx(voice)>=0||/natural|online/i.test(voice.name));
-  $("vhint").hidden=!!good;
+  $("vhint").hidden=!!(good||m);
+  if(!$("vlist").hidden)renderVoiceList();
+}
+function renderVoiceList(){
+  var box=$("vlist");box.textContent="";
+  var en=allVoices.filter(isEn).sort(function(a,b){return tier(a)-tier(b)||String(a.name).localeCompare(String(b.name))});
+  var auto=document.createElement("button");auto.type="button";auto.className="vauto";
+  auto.textContent=manual?"Use automatic":"Automatic (in use)";auto.disabled=!manual;
+  auto.addEventListener("click",function(e){e.stopPropagation();manual=null;try{localStorage.removeItem("sfm-voice")}catch(_){}loadVoices();renderVoiceList()});
+  box.appendChild(auto);
+  if(!en.length){var p=document.createElement("div");p.textContent="No English voices reported yet.";box.appendChild(p);return}
+  var ul=document.createElement("ul");
+  en.forEach(function(v){var li=document.createElement("li"),b=document.createElement("button");b.type="button";
+    var on=voice&&v===voice||(voice&&uri(v)&&uri(v)===uri(voice)&&v.name===voice.name);
+    if(on)b.className="on";
+    var t=document.createElement("b");t.textContent=(on?"✓ ":"")+v.name;
+    var d=document.createElement("small");d.textContent=(v.lang||"?")+" · "+(uri(v)||"no voiceURI")+" · "+(v.localService?"local":"network");
+    b.appendChild(t);b.appendChild(d);
+    b.addEventListener("click",function(e){e.stopPropagation();manual={uri:uri(v),name:v.name,lang:v.lang||""};LS.set("voice",manual);loadVoices();renderVoiceList()});
+    li.appendChild(b);ul.appendChild(li)});
+  box.appendChild(ul);
 }
 function speak(text,btn){
   text=(text||"").trim();if(!text)return;
   if(!ok){$("unsupported").hidden=false;return}
   if(synth.speaking||synth.pending)synth.cancel();
   var u=new SpeechSynthesisUtterance(text);
-  if(!voice)loadVoices();
+  loadVoices();
   u.lang=(voice&&voice.lang)||"en-US";if(voice){try{u.voice=voice}catch(e){}}
   u.rate=RATE;u.volume=VOLUME;u.pitch=1;
   current=u; // keep a reference so Safari doesn't drop it
@@ -150,8 +192,11 @@ $("txt").addEventListener("keydown",function(e){if(e.key==="Enter"&&!e.shiftKey&
 $("save").addEventListener("click",function(){var t=$("txt").value.trim();if(!t){$("txt").focus();return}
   if(BUILTIN.indexOf(t)<0&&custom.indexOf(t)<0){custom.push(t);LS.set("custom",custom);renderPresets()}});
 renderPresets();renderRecent();
-if(ok){loadVoices();if(synth.addEventListener)synth.addEventListener("voiceschanged",loadVoices);else synth.onvoiceschanged=loadVoices;setTimeout(loadVoices,500);setTimeout(loadVoices,1500);setTimeout(function(){loadVoices();if(!voice)$("vname").textContent="Voice: default"},4000)}
+if(ok){loadVoices();if(synth.addEventListener)synth.addEventListener("voiceschanged",loadVoices);else synth.onvoiceschanged=loadVoices;[0,250,1000,2500].forEach(function(t){setTimeout(loadVoices,t)});setTimeout(function(){loadVoices();if(!voice)$("vname").textContent="Voice: default"},4000);
+  window.addEventListener("pageshow",loadVoices);document.addEventListener("visibilitychange",function(){if(!document.hidden)loadVoices()});
+  document.addEventListener("pointerdown",function once(){loadVoices();document.removeEventListener("pointerdown",once,true)},true)}
 else $("vname").textContent="";
+$("vname").addEventListener("click",function(){loadVoices();var l=$("vlist"),open=l.hidden;l.hidden=!open;this.setAttribute("aria-expanded",String(open));if(open)renderVoiceList()});
 })();
 </script>
 </body>
